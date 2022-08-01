@@ -8,6 +8,7 @@ import busio
 import board
 
 import time
+import os
 
 import adafruit_sgp30
 
@@ -53,27 +54,36 @@ def dead_band(fwd, turn, fwd_dead, turn_dead):
 eCO2 = 0.0
 tvoc = 0.0
 
+high_res = False
+
 async def send_vox(websocket):
     global eCO2
     global tvoc
     while True:
         await websocket.send('{eCO2}:{TVOC}'.format(eCO2=eCO2, TVOC=tvoc))
-        print('sending ' + '{eCO2}:{TVOC}'.format(eCO2=eCO2, TVOC=tvoc))
+        print('sending ' + '{eCO2}:{TVOC}'.format(eCO2=eCO2, TVOC=tvoc), flush=True)
         await asyncio.sleep(100/1000)
 
 async def rover_main(websocket, drive, servo):
     global eCO2
     global tvoc
 
+    global high_res
+
     #cam = cv2.VideoCapture(0)
 
     print('connected to server')
     while True:
         # await websocket.send("hello")
+        #response = '0:0:0'
         response = await websocket.recv()
+        #try:
+        #    response = await asyncio.wait_for(websocket.recv(), timeout=1.5)
+        #except asyncio.TimeoutError:
+        #    print('timed out', flush=True)
         print(response, flush=True)
         axes = [float(s) for s in response.split(':')[:2]]
-        fwd = -axes[0]
+        fwd = -axes[0] *0.5
         turn = axes[1]
         fwd, turn = dead_band(fwd, turn , 0.1, 0.1)
         #print(str(fwd) + ' ' + str(turn))
@@ -88,6 +98,7 @@ async def rover_main(websocket, drive, servo):
 
         buttons = [bool(int(s)) for s in response.split(':')[2:]]
         use_vox = buttons[0]
+        high_res = buttons[1]
         if use_vox:
             #print('using vox')
             eCO2, tvoc = sgp30.iaq_measure()
@@ -97,14 +108,14 @@ async def rover_main(websocket, drive, servo):
             pass
             #await websocket.send('-1:-1')
 
-        asyncio.sleep(100/1000)
+        await asyncio.sleep(20/1000)
 
 async def test():
     drive, servo = hd_init()
 
     #cam = cv2.VideoCapture(0)
 
-    async for websocket in websockets.connect('ws://192.168.99.32:8000'):
+    async for websocket in websockets.connect('ws://192.168.99.32:{port}'.format(port=os.environ.get('PORT', '8000')), max_queue=1024):
         #await test2(websocket, drive, servo)
         try:
             await asyncio.gather(rover_main(websocket, drive, servo), send_vox(websocket))
@@ -115,20 +126,25 @@ def throw():
     asyncio.run(test())
 
 async def test_cam():
+    global high_res
+
     cam = cv2.VideoCapture(0)
 
-    async for websocket in websockets.connect('ws://192.168.99.32:8001'):
+    async for websocket in websockets.connect('ws://192.168.99.32:{port}'.format(port=os.environ.get('WORT', '8001'))):
         try:
             while True:
                 ret, frame = cam.read()
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                gray = cv2.resize(gray, (480, 270))
+
+                gray = frame
+                if not high_res:
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    gray = cv2.resize(gray, (160, 90))
 
                 ret, buf = cv2.imencode('.jpg', gray)
 
                 await websocket.send(bytearray(buf))
 
-                asyncio.sleep(100/1000)
+                await asyncio.sleep(200/1000)
         except websockets.ConnectionClosed:
             continue
 

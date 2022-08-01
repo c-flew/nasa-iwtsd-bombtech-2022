@@ -8,6 +8,7 @@ import threading
 from turbojpeg import TurboJPEG, TJPF_GRAY, TJSAMP_GRAY, TJFLAG_PROGRESSIVE, TJFLAG_FASTUPSAMPLE, TJFLAG_FASTDCT
 import cv2
 import numpy as np
+import os
 
 # create handler for each connection
 # gl
@@ -16,18 +17,23 @@ import numpy as np
 pygame.init()
 pygame.joystick.init()
 
-js1 = pygame.joystick.Joystick(0)
+js1 = pygame.joystick.Joystick(int(os.environ.get('CRONCH', '0')))
 js1.init()
 print('joystick connected: ' + str(js1.get_name()))
 
+high_res = False
+
 async def get_joy():
+    global high_res
+
     pygame.event.pump()
     x_axis = js1.get_axis(3) # right stick x
     y_axis = js1.get_axis(1) # left stick y
 
     vox_button = js1.get_button(0) # A
+    high_res = js1.get_button(1)
 
-    ws_data = "{y_axis}:{x_axis}:{use_vox}".format(y_axis=y_axis, x_axis=x_axis, use_vox=vox_button)
+    ws_data = "{y_axis}:{x_axis}:{use_vox}:{high_res}".format(y_axis=y_axis, x_axis=x_axis, use_vox=vox_button, high_res=high_res)
     return ws_data
 
 
@@ -59,6 +65,8 @@ async def cam_handler(websocket):
         jpg = np.asarray(bytearray(resp), dtype=np.uint8)
         img = jpeg.decode(jpg)
         print(img)
+        if not high_res:
+            img = cv2.resize(img, (960, 540))
         cv2.imshow('', img)
         cv2.waitKey(1)
 
@@ -66,11 +74,11 @@ async def cam_handler(websocket):
 
 # start_server = websockets.serve(handler, "192.168.99.32", 8000)
 async def start_server():
-    async with websockets.serve(handler, '192.168.99.32', 8000):
+    async with websockets.serve(handler, '192.168.99.32', int(os.environ.get('PORT', '8000'))):
         await asyncio.Future()
 
 async def start_cam_server():
-    async with websockets.serve(cam_handler, '192.168.99.32', 8001):
+    async with websockets.serve(cam_handler, '192.168.99.32', int(os.environ.get('PORT', '8000'))+1):
         await asyncio.Future()
 
 async def idk():
@@ -79,4 +87,12 @@ async def idk():
 # asyncio.get_event_loop().run_until_complete(start_server)
 # asyncio.get_event_loop().run_forever()
 # asyncio.run(start_server())
-asyncio.run(idk())
+
+def async_main():
+    asyncio.run(idk())
+
+# for i in range():
+#     pass
+
+th = threading.Thread(target=async_main)
+th.start()
